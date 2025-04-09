@@ -1,27 +1,26 @@
 <?php
-session_start(); // Memulai sesi
+session_start();
 
-// Cek apakah pengguna sudah login
+// Cek login
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
-include 'koneksi.php'; // Koneksi ke database
+include 'koneksi.php';
 
 $username = $_SESSION['username'];
-$user_id = $_SESSION['user_id']; // Ambil usersid dari session
+$user_id = $_SESSION['user_id'];
 
-// Tambah Task Utama
+// Tambah Task
 if (isset($_POST['add_task'])) {
     $task = $_POST['task'];
     $date = $_POST['taskdate'];
 
-    $q_insert = "INSERT INTO tasks (tasklabel, taskstatus, taskdate, usersid) 
-                 VALUES (:task, 'open', :taskdate, :userid)";
-    $stmt = $pdo->prepare($q_insert);
+    $stmt = $pdo->prepare("INSERT INTO tasks (tasklabel, taskstatus, taskdate, usersid) 
+                           VALUES (:task, 'open', :taskdate, :userid)");
     $stmt->execute([
-        ':task' => $task, 
+        ':task' => $task,
         ':taskdate' => $date,
         ':userid' => $user_id
     ]);
@@ -35,15 +34,13 @@ if (isset($_POST['add_subtask'])) {
     $subtask_priority = $_POST['subtask_priority'];
     $taskid = $_POST['taskid'];
 
-    // Validasi bahwa task milik user
     $check = $pdo->prepare("SELECT * FROM tasks WHERE taskid = :taskid AND usersid = :userid");
     $check->execute([':taskid' => $taskid, ':userid' => $user_id]);
     if ($check->rowCount() > 0) {
-        $q_insert_sub = "INSERT INTO subtasks (taskid, subtask_label, subtask_date, subtask_priority, subtask_status) 
-                         VALUES (:taskid, :subtask, :subtask_date, :subtask_priority, 'open')";
-        $stmt = $pdo->prepare($q_insert_sub);
+        $stmt = $pdo->prepare("INSERT INTO subtasks (taskid, subtask_label, subtask_date, subtask_priority, subtask_status) 
+                               VALUES (:taskid, :subtask, :subtask_date, :subtask_priority, 'open')");
         $stmt->execute([
-            ':taskid' => $taskid, 
+            ':taskid' => $taskid,
             ':subtask' => $subtask,
             ':subtask_date' => $subtask_date,
             ':subtask_priority' => $subtask_priority
@@ -52,41 +49,58 @@ if (isset($_POST['add_subtask'])) {
     header('Location: index.php');
 }
 
-// Ambil semua Task Utama milik user yang login
-$q_select = "SELECT * FROM tasks WHERE usersid = :userid ORDER BY taskid DESC";
-$stmt = $pdo->prepare($q_select);
-$stmt->execute([':userid' => $user_id]);
-$tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Ambil semua Subtask yang terkait dengan Task user
-$q_subtasks = "SELECT subtasks.* FROM subtasks 
-               JOIN tasks ON subtasks.taskid = tasks.taskid 
-               WHERE tasks.usersid = :userid 
-               ORDER BY subtasks.taskid DESC, subtasks.subtask_id DESC";
-$stmt = $pdo->prepare($q_subtasks);
-$stmt->execute([':userid' => $user_id]);
-$subtasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
-$grouped_subtasks = [];
-foreach ($subtasks as $subtask) {
-    $grouped_subtasks[$subtask['taskid']][] = $subtask;
-}
-
-// Hapus Task (jika milik user)
+// Hapus Task
 if (isset($_GET['delete_task'])) {
     $taskid = $_GET['delete_task'];
     $stmt = $pdo->prepare("DELETE FROM tasks WHERE taskid = :taskid AND usersid = :userid");
-    $stmt->execute([':taskid' => $taskid, ':userid' => $user_id]); // <- fix di sini
+    $stmt->execute([':taskid' => $taskid, ':userid' => $user_id]);
     header('Location: index.php');
 }
 
-// Hapus Subtask (jika milik user)
+// Hapus Subtask
 if (isset($_GET['delete_subtask'])) {
     $subtask_id = $_GET['delete_subtask'];
     $stmt = $pdo->prepare("DELETE subtasks FROM subtasks 
                            JOIN tasks ON subtasks.taskid = tasks.taskid 
                            WHERE subtasks.subtask_id = :subtaskid AND tasks.usersid = :userid");
-    $stmt->execute([':subtaskid' => $subtask_id, ':userid' => $user_id]); // <- fix di sini juga
+    $stmt->execute([':subtaskid' => $subtask_id, ':userid' => $user_id]);
     header('Location: index.php');
+}
+
+// Update status subtask (completed/open)
+if (isset($_POST['subtaskid']) && isset($_POST['mark_done'])) {
+    $subtask_id = $_POST['subtaskid'];
+    $new_status = $_POST['mark_done'] == '1' ? 'completed' : 'open';
+
+    $stmt = $pdo->prepare("SELECT subtasks.* FROM subtasks 
+                           JOIN tasks ON subtasks.taskid = tasks.taskid 
+                           WHERE subtasks.subtask_id = :subtaskid AND tasks.usersid = :userid");
+    $stmt->execute([':subtaskid' => $subtask_id, ':userid' => $user_id]);
+
+    if ($stmt->rowCount() > 0) {
+        $update = $pdo->prepare("UPDATE subtasks SET subtask_status = :status WHERE subtask_id = :subtaskid");
+        $update->execute([':status' => $new_status, ':subtaskid' => $subtask_id]);
+    }
+    header('Location: index.php');
+    exit();
+}
+
+// Ambil semua task
+$stmt = $pdo->prepare("SELECT * FROM tasks WHERE usersid = :userid ORDER BY taskid DESC");
+$stmt->execute([':userid' => $user_id]);
+$tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Ambil semua subtask
+$stmt = $pdo->prepare("SELECT subtasks.* FROM subtasks 
+                       JOIN tasks ON subtasks.taskid = tasks.taskid 
+                       WHERE tasks.usersid = :userid 
+                       ORDER BY subtasks.taskid DESC, subtasks.subtask_id DESC");
+$stmt->execute([':userid' => $user_id]);
+$subtasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$grouped_subtasks = [];
+foreach ($subtasks as $subtask) {
+    $grouped_subtasks[$subtask['taskid']][] = $subtask;
 }
 ?>
 
@@ -157,19 +171,23 @@ if (isset($_GET['delete_subtask'])) {
                         </div>
                         <div>
                             <a href="edittask.php?taskid=<?= $task['taskid'] ?>">edit</a>
-                            <a href="?delete_task=<?= $task['taskid'] ?>" class="text-red" title="Hapus" onclick="return confirm('Yakin ingin menghapus?')"><i class="bx bx-trash"></i></a>
+                            <a href="?delete_task=<?= $task['taskid'] ?>" class="text-red" onclick="return confirm('Yakin ingin menghapus?')"><i class="bx bx-trash"></i></a>
                         </div>
                     </div>
 
-                    <!-- Menampilkan Subtask -->
                     <?php if (!empty($grouped_subtasks[$task['taskid']])): ?>
                         <?php foreach ($grouped_subtasks[$task['taskid']] as $subtask): ?>
-                            <div class="subtask-item">
-                                <span>- <?= htmlspecialchars($subtask['subtask_label']) ?> (<?= date('d M Y', strtotime($subtask['subtask_date'])) ?>)</span>
+                            <form method="post" style="display: flex; align-items: center; gap: 10px; margin-left: 20px;">
+                                <input type="hidden" name="subtaskid" value="<?= $subtask['subtask_id'] ?>">
+                                <input type="hidden" name="mark_done" value="0">
+                                <input type="checkbox" name="mark_done" value="1" onchange="this.form.submit()" <?= $subtask['subtask_status'] === 'completed' ? 'checked' : '' ?>>
+                                <span style="<?= $subtask['subtask_status'] === 'completed' ? 'text-decoration: line-through; color: gray;' : '' ?>">
+                                    - <?= htmlspecialchars($subtask['subtask_label']) ?> (<?= date('d M Y', strtotime($subtask['subtask_date'])) ?>)
+                                </span>
                                 <span class="text-orange">Prioritas: <?= htmlspecialchars($subtask['subtask_priority']) ?></span>
                                 <a href="editsub.php?subtaskid=<?= $subtask['subtask_id'] ?>">edit</a>
-                                <a href="?delete_subtask=<?= $subtask['subtask_id'] ?>" class="text-red" title="Hapus" onclick="return confirm('Hapus subtask?')"><i class="bx bx-trash"></i></a>
-                            </div>
+                                <a href="?delete_subtask=<?= $subtask['subtask_id'] ?>" class="text-red" onclick="return confirm('Hapus subtask?')"><i class="bx bx-trash"></i></a>
+                            </form>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
